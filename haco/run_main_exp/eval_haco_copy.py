@@ -139,7 +139,7 @@ def get_tensorflow_function(exp_path, ckpt_idx):
 
 if __name__ == '__main__':
     # hyperparameters
-    USE_PYTORCH = True  # Set to True for PyTorch model evaluation
+    USE_PYTORCH = True
     if USE_PYTORCH:
         MODEL_PATH = "/home/anthony/HACO/haco/run_main_exp/checkpoints/best/policy.pt"
     else:
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     env_config = {
         "manual_control": True,
         "use_render": True,
-        "controller": "joystick",
+        "controller": "keyboard" if USE_PYTORCH else "joystick",
         "window_size": (1600, 1100),
         "cos_similarity": True,
         "map": "CTO",
@@ -309,21 +309,21 @@ if __name__ == '__main__':
 
                 filename = f"trajectory_ckpt_{ckpt_idx}_episode_{episode}.json"
                 filepath = os.path.join(traj_dir, filename)
+                if not USE_PYTORCH:
+                    with open(filepath, 'w') as f:
+                        json.dump(traj_data, f, cls=NumpyEncoder)
 
-                with open(filepath, 'w') as f:
-                    json.dump(traj_data, f, cls=NumpyEncoder)
+                    # Save frames using thread pool
+                    with ThreadPoolExecutor(max_workers=threading.active_count() * 2) as executor:
+                        futures = [
+                            executor.submit(save_image, frame_path, frame) 
+                            for frame_path, frame in episode_data["frames"].items()
+                        ]
+                        for future in futures:
+                            future.result()
 
-                # Save frames using thread pool
-                with ThreadPoolExecutor(max_workers=threading.active_count() * 2) as executor:
-                    futures = [
-                        executor.submit(save_image, frame_path, frame) 
-                        for frame_path, frame in episode_data["frames"].items()
-                    ]
-                    for future in futures:
-                        future.result()
-
-                print(f"Saved trajectory data for checkpoint {ckpt_idx}, episode {episode}")
-                print(f"Saved {len(episode_data['frames'])} video frames")
+                    print(f"Saved trajectory data for checkpoint {ckpt_idx}, episode {episode}")
+                    print(f"Saved {len(episode_data['frames'])} video frames")
 
                 super_data[ckpt_idx].append(episode_metrics)
 

@@ -6,8 +6,10 @@ import requests
 from PIL import Image
 import re
 import json
+from dotenv import load_dotenv
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
 
-api_key = "sk-j8X_VTW970z8aKxSBqx7QH7bIOoGTNp_vLogQwyTpRT3BlbkFJGKqFWtV1s8dYGAAE2gGprHb84V9OExZdbkJornWhsA"
 image_dir = "/home/anthony/HACO/haco/run_main_exp/videos"
 
 def natural_sort_key(s):
@@ -105,6 +107,7 @@ def send_images(prefix, base_index, interval, num_images, trajectory_file):
         "messages": messages,
         "max_tokens": 700
     }
+
     
     headers = {
         "Content-Type": "application/json",
@@ -114,6 +117,5 @@ def send_images(prefix, base_index, interval, num_images, trajectory_file):
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     print(response.json()['choices'][0]['message']['content'])
 
-# Example usage
 trajectory_file = "/home/anthony/HACO/haco/run_main_exp/trajectory_data/trajectory_ckpt_53_episode_0.json"
 send_images(prefix="frame_53_0", base_index=192, interval=3, num_images=9, trajectory_file=trajectory_file)

@@ -50,7 +50,7 @@ if __name__ == '__main__':
         normalize_actions=True,
         num_cpus_for_driver=0.5,
         # No extra worker used for learning. But this config impact the evaluation workers.
-        num_cpus_per_worker=0.1,
+        num_cpus_per_worker33=0.1,
         # num_gpus_per_worker=0.1 if args.num_gpus != 0 else 0,
         num_gpus=0.2 if args.num_gpus != 0 else 0,
     )
