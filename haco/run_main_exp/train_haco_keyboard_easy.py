@@ -22,11 +22,12 @@ if __name__ == '__main__':
         env_config={
             "manual_control": True,
             "use_render": True,
-            "controller": "keyboard",
+            "controller": "joystick",
             "window_size": (1600, 1100),
             "cos_similarity": True,
-            "map": "COX",
+            "map": "CTO",
             "environment_num": 1,
+            "start_seed": 15,
         },
 
         # ===== Training =====
@@ -51,6 +52,7 @@ if __name__ == '__main__':
         num_cpus_per_worker=0.1,
         # num_gpus_per_worker=0.1 if args.num_gpus != 0 else 0,
         num_gpus=0.2 if args.num_gpus != 0 else 0,
+        
     )
 
     train(

@@ -10,19 +10,23 @@ from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 """
 requirement for IWR/HG-Dagger/GAIl:
 
-create -n haco-hg-dagger python version=3.7
-1. pip install loguru imageio easydict tensorboardX pyyaml  stable_baselines3 pickle5
-2. conda install pytorch==1.5.0 torchvision==0.6.0 cudatoolkit=9.2 -c pytorch
+conda create -n haco-bc python=3.7 -y
+conda activate haco-bc
+conda install pytorch==1.5.0 pytorch-cuda=9.1 torchvision cudatoolkit=9.2 -c nvidia -y
+pip install loguru imageio easydict tensorboardX pyyaml stable_baselines3 pickle5 metadrive-simulator==0.2.4
+pip install /home/anthony/HACO
+pip install numpy==1.21
+conda install pytorch==1.5.0 torchvision cudatoolkit=9.2 -c nvidia -y
 """
 
 # hyperpara
-BC_WARMUP_DATA_USAGE = 30000  # use human data to do warm up
+BC_WARMUP_DATA_USAGE = 3  # use human data to do warm up
 NUM_ITS = 5
 STEP_PER_ITER = 5000
 learning_rate = 5e-4
 batch_size = 256
 
-need_eval = False  # we do not perform online evaluation. Instead, we evaluate by saved model
+need_eval = True  # we do not perform online evaluation. Instead, we evaluate by saved model
 evaluation_episode_num = 30
 num_sgd_epoch = 1000  # sgd epoch on data set
 device = "cuda"
@@ -31,6 +35,7 @@ device = "cuda"
 training_config = baseline_train_config
 training_config["use_render"] = True
 training_config["manual_control"] = True
+training_config["controller"] = "keyboard"
 eval_config = baseline_eval_config
 
 if __name__ == "__main__":
@@ -51,7 +56,7 @@ if __name__ == "__main__":
     action_shape = eval_env.action_space.shape
 
     # fill buffer with expert data
-    samples = load_human_data("../human_traj_100_new.json", data_usage=BC_WARMUP_DATA_USAGE)
+    samples = load_human_data("/home/anthony/HACO/haco/utils/human_traj_file1_4.json", data_usage=BC_WARMUP_DATA_USAGE)
 
     # train first epoch
     agent = Ensemble(obs_shape, action_shape, device=device).to(device).float()
@@ -91,8 +96,10 @@ if __name__ == "__main__":
 
             episode_reward += r
             episode_cost += info["native_cost"]
+
             if takeover:
                 # for hg dagger aggregate data only when takeover occurs
+                print("b")
                 samples["state"].append(state)
                 samples["action"].append(np.array(action))
                 samples["next_state"].append(next_state)
@@ -104,6 +111,7 @@ if __name__ == "__main__":
 
             # train after BATCH_PER_ITER steps
             if done:
+                print("d" + str(steps) + " " + str(STEP_PER_ITER))
                 if info["arrive_dest"]:
                     success_num += 1
                 done_num += 1
@@ -124,6 +132,7 @@ if __name__ == "__main__":
                                 batch_size=batch_size,
                                 learning_rate=learning_rate,
                                 exp_log=exp_log)
+                    print("asa")
                     if need_eval:
                         evaluation(eval_env, agent, evaluation_episode_num=evaluation_episode_num, exp_log=exp_log)
                     break

@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/anthony/HACO/haco/utils/checkpoint/saved3/model"
+all_model_checkpoint_paths: "/home/anthony/HACO/haco/utils/checkpoint/saved3/model"

@@ -1,4 +1,15 @@
 /haco.egg-info/
 **/__pycache__/**
 .idea/
-**/human_traj_100.json
+**/error.txt
+**/*.tune_metadata
+**/progress.csv
+**/params.json
+**/params.pkl
+**/events.out.tfevents*
+**/checkpoint-*
+**/.is_checkpoint
+**/experiment_state-*
+**/result.json
+**/videos
+**/videos_cop

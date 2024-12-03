@@ -65,6 +65,7 @@ def shuffle_data(X_train, y_train):
 
 def train_model(model, X_train, y_train, path, num_epochs=50, learning_rate=1e-3, lambda_l2=1e-5,
                 batch_size=32, shuffle=True, exp_log=None, log_interval=10):
+    print("... training")
     X_train = np.array(X_train)
     y_train = np.array(y_train)
     criterion = torch.nn.MSELoss()
@@ -116,7 +117,7 @@ def evaluation(env, model, evaluation_episode_num=30, exp_log=None):
         episode_overtake = []
         state = env.reset()
         while episode_num < evaluation_episode_num:
-            prediction = model(torch.tensor(state).to(device).float())
+            prediction = model.pis[0](torch.tensor(state).to(device).float())
             next_state, r, done, info = env.step(prediction.detach().cpu().numpy().flatten())
             state = next_state
             episode_reward += r
