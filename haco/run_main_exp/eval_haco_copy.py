@@ -147,7 +147,7 @@ if __name__ == '__main__':
         CKPT_START = 1982
         CKPT_END = 1983
         
-    EPISODE_NUM_PER_CKPT = 20
+    EPISODE_NUM_PER_CKPT = 1
     RENDER = True
     
     env_config = {

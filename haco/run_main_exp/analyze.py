@@ -69,18 +69,27 @@ def send_images(prefix, base_index, interval, num_images, trajectory_file):
     grid_path = os.path.join(image_dir, "grid_image.jpg")
     create_image_grid(image_paths, grid_path)
     base64_image = encode_image(grid_path)
-    input = f"""Trajectory data:\n{trajectory_text}\n\nFocus on the actions in the frames(and in the trajectory text), as well as the actions in the provided trajectory (every third image frame corresponds to an action, as the frames are subsampled) before an intervention has happened. I intervened because I was afraid of crashing into the truck ahead of me. What actions could have been taken instead of the actions that were taken. First give a text description of how the agent could've improved pre-intervention, then give exact numerical before and after pairs for each action taken (in the provided trajectory data) (before, after) for steering and acceleration (for the preintervention section), and do it as concisely as possible. Limit floats to 3 sigfigs. Output steering in the [-1, 1] range and Acceleration in the [-1, 1] range, with -1 indicating acceleration. YOU MUST OUTPUT NEGATIVE VALUES for the after for acceleration TO ACCELERATE!. Start from action {base_index}, and don't skip any actions, go CONSECUTIVELY as the text data is provided, until the last action before intervention. Exact numerical before and after pairs for each action taken (in the provided trajectory data) (before, after) without elaboration. I want json. E.g.
+    
+
+    input_text = f"""Trajectory data:\n{trajectory_text}\n\n
+Analyze the sequence of driving actions before an intervention to avoid a truck collision. For each action frame (every 3rd frame):
+
+1. Provide a brief text description suggesting better pre-intervention actions
+2. Output a JSON with (before, after) pairs for steering [-1,1] and acceleration [-1,1] values
+- Use negative acceleration values for deceleration
+- Include 3 significant figures
+- Start from {base_index}
+- Include all consecutive actions until intervention
+
+Example format requested, (all in a single json list):
+```json
 {{
-    [{{
-        "id" : 25,
-        "steering": [0.1, 0.2],
-        "acceleration": [0.3, -0.9]
-    }},
-    ...
-    ]
+"steering": [before, after],
+"acceleration": [before, after]
 }}
+```
 """
-    print(input)
+    print(input_text)
     # exit()
     
 
@@ -90,7 +99,7 @@ def send_images(prefix, base_index, interval, num_images, trajectory_file):
             "content": [
                 {
                     "type": "text",
-                    "text": input
+                    "text": input_text
                 },
                 {
                     "type": "image_url",
