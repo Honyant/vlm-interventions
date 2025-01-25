@@ -54,6 +54,7 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
                 "traffic_density": 0.06,
                 "manual_control": False,
                 "controller": "joystick",
+                "out_of_lane_penalty": -1.0,
                 "agent_policy": MyTakeoverPolicy,
                 "only_takeover_start_cost": True,
                 "main_exp": True,
@@ -74,6 +75,7 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
         self.t_o = False
         self.total_takeover_cost = 0
         self.input_action = None
+        self.accumulated_line_penalty = 0
         ret = super(HumanInTheLoopEnv, self).reset(*args, **kwargs)
         if self.config["random_spawn"]:
             self.config["vehicle_config"]["spawn_lane_index"] = (FirstPGBlock.NODE_1, FirstPGBlock.NODE_2,
@@ -104,6 +106,18 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
         engine_info["total_takeover_cost"] = self.total_takeover_cost
         engine_info["native_cost"] = engine_info["cost"]
         engine_info["total_native_cost"] = self.episode_cost
+
+        # Custom Out of Lane Term
+        if self.vehicle.on_broken_line or self.vehicle.on_yellow_continuous_line or self.vehicle.on_white_continuous_line:
+            penalty = self.config["out_of_lane_penalty"]
+            self.accumulated_line_penalty += penalty
+            engine_info["accumulated_line_penalty"] = self.accumulated_line_penalty
+            engine_info["out_of_lane"] = True
+            engine_info["out_of_lane_penalty"] = penalty
+        else:
+            engine_info["out_of_lane"] = False
+            engine_info["out_of_lane_penalty"] = 0.0
+
         return o, r, d, engine_info
 
     def _is_out_of_road(self, vehicle):
@@ -116,13 +130,15 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
         self.input_action = copy.copy(actions)
         ret = super(HumanInTheLoopEnv, self).step(actions)
         steering, acceleration = ret[3]["raw_action"]
+        engine_info = ret[3]
         while self.in_stop:
             self.engine.taskMgr.step()
         if self.config["use_render"] and self.config["main_exp"] and not self.config["in_replay"]:
             super(HumanInTheLoopEnv, self).render(text={
-                "Steering": steering,
-                "Acceleration": acceleration,
-                "Intervention occuring": self.t_o,
+                # "Steering": steering,
+                # "Acceleration": acceleration,
+                # "Intervention occuring": self.t_o,
+                "Time out of line": -self.accumulated_line_penalty/10
             })
         return ret
 

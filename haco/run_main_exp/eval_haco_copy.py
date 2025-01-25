@@ -167,7 +167,7 @@ def main(args):
     env_config = {
         "manual_control": True,
         "use_render": True,
-        "controller": "keyboard",
+        "controller": "joystick",
         "window_size": (1600, 1100),
         "cos_similarity": True,
         "map": "CTO",

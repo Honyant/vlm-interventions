@@ -13,4 +13,7 @@
 **/result.json
 **/videos
 **/videos_cop
+**/videos_old
+**/audio_recordings
+**/trajectory_data
 **/.env
