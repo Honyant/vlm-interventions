@@ -21,37 +21,42 @@ import wave
 from datetime import datetime
 
 class AudioRecorder:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, save_audio):
         self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+        self.save_audio = save_audio
         self.recording = False
         self.frames = []
         self.audio = pyaudio.PyAudio()
         self.stream = None
-        
+
+        if self.save_audio:
+            os.makedirs(output_dir, exist_ok=True)
+
     def callback(self, in_data, frame_count, time_info, status):
-        if self.recording:
+        if self.recording and self.save_audio:
             self.frames.append(in_data)
         return (in_data, pyaudio.paContinue)
-    
+
     def start_recording(self):
+        if not self.save_audio:
+            return
         self.recording = True
         self.frames = []
         self.stream = self.audio.open(format=pyaudio.paInt16, channels=1,
-                                    rate=44100, input=True,
-                                    stream_callback=self.callback)
+                                      rate=44100, input=True,
+                                      stream_callback=self.callback)
         self.stream.start_stream()
-        
+
     def stop_recording(self, trajectory_id):
-        if not self.recording:
-            return
+        if not self.save_audio or not self.recording:
+            return None
         self.recording = False
         self.stream.stop_stream()
         self.stream.close()
-        
+
         filename = f"trajectory_{trajectory_id}.wav"
         filepath = os.path.join(self.output_dir, filename)
-        
+
         wf = wave.open(filepath, 'wb')
         wf.setnchannels(1)
         wf.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
@@ -76,7 +81,7 @@ class NumpyEncoder(json.JSONEncoder):
 def get_pytorch_function(model_path):
     dummy_env = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(259,), dtype=np.float32)
     dummy_action_space = gym.spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
-    
+
     config = {
         "framework": "torch",
         "hidden_dim": 256,
@@ -85,9 +90,9 @@ def get_pytorch_function(model_path):
         "learning_rate": 5e-4,
         "weight_decay": 1e-5,
     }
-    
+
     policy = ImprovedBCPolicy(dummy_env, dummy_action_space, config)
-    
+
     try:
         state_dict = torch.load(model_path)
         policy.network.load_state_dict(state_dict['network_state'])
@@ -96,9 +101,9 @@ def get_pytorch_function(model_path):
     except Exception as e:
         print(f"Error loading model: {e}")
         raise
-    
+
     policy.network.eval()
-    
+
     def _f(obs):
         try:
             with torch.no_grad():
@@ -113,12 +118,12 @@ def get_pytorch_function(model_path):
         except Exception as e:
             print(f"Error computing actions: {e}")
             raise
-            
+
     return _f
 
 def get_tensorflow_function(exp_path, ckpt_idx):
     ckpt = os.path.join(exp_path, f"checkpoint_{ckpt_idx}", f"checkpoint-{ckpt_idx}")
-    
+
     config = {
         "env": HumanInTheLoopEnv,
         "framework": "tf",
@@ -135,7 +140,7 @@ def get_tensorflow_function(exp_path, ckpt_idx):
             "map": "CTO",
         }
     }
-    
+
     trainer = HACOTrainer(config)
     trainer.restore(ckpt)
 
@@ -154,16 +159,18 @@ def save_image(frame_path, frame):
 
 def main(args):
     USE_PYTORCH = args.use_pytorch
+    SAVE_DATA = args.save_data
+
     if USE_PYTORCH:
         MODEL_PATH = args.pytorch_model_path
     else:
         CKPT_PATH = args.tensorflow_ckpt_path
         CKPT_START = args.ckpt_start
         CKPT_END = args.ckpt_end
-        
+
     EPISODE_NUM = args.num_episodes
     RENDER = args.render
-    
+
     env_config = {
         "manual_control": True,
         "use_render": True,
@@ -184,15 +191,15 @@ def main(args):
     env = make_env(env_config)
 
     video_dir = os.path.join(args.output_dir, "videos")
-    os.makedirs(video_dir, exist_ok=True)
-
     traj_dir = os.path.join(args.output_dir, "trajectory_data")
-    os.makedirs(traj_dir, exist_ok=True)
-    
     audio_dir = os.path.join(args.output_dir, "audio_recordings")
-    os.makedirs(audio_dir, exist_ok=True)
-    
-    audio_recorder = AudioRecorder(audio_dir)
+
+    if SAVE_DATA:
+        os.makedirs(video_dir, exist_ok=True)
+        os.makedirs(traj_dir, exist_ok=True)
+        os.makedirs(audio_dir, exist_ok=True)
+
+    audio_recorder = AudioRecorder(audio_dir, save_audio=SAVE_DATA)
 
     if USE_PYTORCH:
         ckpt_indices = [0]
@@ -213,7 +220,7 @@ def main(args):
             for episode in range(EPISODE_NUM):
                 trajectory_id = f"{ckpt_idx}_{episode}"
                 audio_recorder.start_recording()
-                
+
                 o = env.reset()
                 done = False
                 episode_data = {
@@ -231,11 +238,12 @@ def main(args):
                     "cost": 0,
                     "episode_crash_vehicle": 0,
                     "episode_crash_object": 0,
-                    "trajectory": [],
-                    "frames": {}
                 }
 
                 step = 0
+                trajectory = []
+                frames = {}
+
                 while not done:
                     try:
                         action_to_send = compute_actions(o)["default_policy"]
@@ -244,10 +252,9 @@ def main(args):
                         print(f"Error during episode step {step}: {e}")
                         break
 
-                    episode_data["velocity"].append(info["velocity"])
-                    episode_data["steering"].append(info["steering"])
-                    episode_data["step_reward"].append(info["step_reward"])
-                    episode_data["acceleration"].append(info["acceleration"])
+                    for key in ["velocity", "steering", "step_reward", "acceleration"]:
+                        episode_data[key].append(info[key])
+
                     episode_data["takeover"] += 1 if info["takeover"] else 0
                     episode_data["raw_episode_reward"] += info["step_reward"]
                     episode_data["episode_crash_rate"] += 1 if info["crash"] else 0
@@ -258,18 +265,15 @@ def main(args):
                     episode_data["episode_crash_vehicle"] += 1 if info["crash_vehicle"] else 0
                     episode_data["episode_crash_object"] += 1 if info["crash_object"] else 0
 
-                    frame = None
-                    if hasattr(env, 'engine'):
-                        img = PNMImage()
-                        env.engine.win.getScreenshot(img)
-                        frame = img
-
                     frame_filename = f"frame_{trajectory_id}_{step}.jpg"
                     frame_path = os.path.join(video_dir, frame_filename)
-                    if frame is not None:
-                        episode_data["frames"][frame_path] = frame
-                        
-                    episode_data["trajectory"].append((o.tolist(), action_to_send.tolist(), info["takeover"], frame_path if frame is not None else None))
+                    if SAVE_DATA and hasattr(env, 'engine'):
+                        img = PNMImage()
+                        env.engine.win.getScreenshot(img)
+                        frames[frame_path] = img
+
+                    if SAVE_DATA:
+                        trajectory.append((o.tolist(), action_to_send.tolist(), info["takeover"], frame_path))
 
                     o = new_o
                     step += 1
@@ -278,10 +282,8 @@ def main(args):
                         done = True
 
                 audio_filepath = audio_recorder.stop_recording(trajectory_id)
-                if audio_filepath:
-                    episode_data["audio_file"] = audio_filepath
 
-                if step > 0:
+                if step > 0 and SAVE_DATA:
                     episode_length = step
                     arrive_dest = info.get("arrive_dest", False)
                     crash = info.get("crash", False)
@@ -320,85 +322,64 @@ def main(args):
                     }
 
                     traj_data = {
-                        "trajectory": episode_data["trajectory"],
+                        "trajectory": trajectory,
                         "metrics": episode_metrics,
-                        "audio_file": episode_data.get("audio_file")
+                        "audio_file": audio_filepath
                     }
 
-                    filename = f"trajectory_{trajectory_id}.json"
-                    filepath = os.path.join(traj_dir, filename)
-                    
+                    filepath = os.path.join(traj_dir, f"trajectory_{trajectory_id}.json")
                     with open(filepath, 'w') as f:
                         json.dump(traj_data, f, cls=NumpyEncoder)
 
                     with ThreadPoolExecutor(max_workers=threading.active_count() * 2) as executor:
                         futures = [
-                            executor.submit(save_image, frame_path, frame) 
-                            for frame_path, frame in episode_data["frames"].items()
+                            executor.submit(save_image, path, frame)
+                            for path, frame in frames.items()
                         ]
                         for future in futures:
                             future.result()
-
-                    print(f"Saved trajectory data and audio for checkpoint {ckpt_idx}, episode {episode}")
-                    print(f"Saved {len(episode_data['frames'])} video frames")
 
                     super_data[ckpt_idx].append(episode_metrics)
 
                 print(f"Episode {episode}/{EPISODE_NUM} completed")
 
-            if super_data[ckpt_idx]:
+            if super_data[ckpt_idx] and SAVE_DATA:
                 print(
                     f"CKPT:{ckpt_idx} | "
                     f"success_rate:{np.mean([ep['success_rate'] for ep in super_data[ckpt_idx]]):.4f}, "
                     f"mean_episode_reward:{np.mean([ep['raw_episode_reward'] for ep in super_data[ckpt_idx]]):.4f}, "
                     f"mean_episode_cost:{np.mean([ep['cost'] for ep in super_data[ckpt_idx]]):.4f}"
                 )
-    except Exception as e:
-        print(f"An error occurred during evaluation: {e}")
-        raise
     finally:
         env.close()
         audio_recorder.close()
 
-    try:
-        results_file = os.path.join(args.output_dir, "eval_haco_ret.json")
-        with open(results_file, "w") as f:
-            json.dump(super_data, f, cls=NumpyEncoder)
-        print(f"Results saved to {results_file}")
-    except Exception as e:
-        print(f"Error saving final results: {e}")
+    if SAVE_DATA:
+        try:
+            results_file = os.path.join(args.output_dir, "eval_haco_ret.json")
+            with open(results_file, "w") as f:
+                json.dump(super_data, f, cls=NumpyEncoder)
+            print(f"Results saved to {results_file}")
+        except Exception as e:
+            print(f"Error saving final results: {e}")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='HACO Training Script with Audio Recording')
-    parser.add_argument('-n', '--num-episodes', type=int, default=1, 
-                      help='Number of episodes to run')
-    parser.add_argument('-m', '--max-steps', type=int, default=None, 
-                      help='Maximum steps per episode (optional)')
-    parser.add_argument('--use-pytorch', action='store_true', 
-                      help='Use PyTorch model instead of TensorFlow')
-    parser.add_argument('--pytorch-model-path', type=str, 
-                      default="/home/anthony/HACO/haco/run_main_exp/checkpoints/best/policy.pt",
-                      help='Path to PyTorch model')
-    parser.add_argument('--tensorflow-ckpt-path', type=str,
-                      default="/home/anthony/HACO/haco/run_main_exp/SAC_HumanInTheLoopEnv_cff06_00000_0_seed=0_2024-05-17_03-45-28",
-                      help='Path to TensorFlow checkpoint directory')
-    parser.add_argument('--ckpt-start', type=int, default=1982,
-                      help='Starting checkpoint index for TensorFlow model')
-    parser.add_argument('--ckpt-end', type=int, default=1983,
-                      help='Ending checkpoint index for TensorFlow model')
-    parser.add_argument('--render', action='store_true', default=True,
-                      help='Enable rendering')
-    parser.add_argument('--output-dir', type=str, 
-                      default="/home/anthony/HACO/haco/run_main_exp",
-                      help='Directory to save outputs')
-    parser.add_argument('--window-size', type=int, nargs=2,
-                      default=[1600, 1100],
-                      help='Window size for rendering (width height)')
-    parser.add_argument('--map', type=str, default="CTO",
-                      help='Map to use for environment')
-    
+    parser = argparse.ArgumentParser(description='Data collection script for VLM Interventions')
+    parser.add_argument('-n', '--num-episodes', type=int, default=1, help='Number of episodes to run')
+    parser.add_argument('-m', '--max-steps', type=int, default=None, help='Maximum steps per episode (optional)')
+    parser.add_argument('--use-pytorch', action='store_true', help='Use PyTorch model instead of TensorFlow')
+    parser.add_argument('--pytorch-model-path', type=str, default="/home/anthony/vlm-interventions/haco/run_main_exp/checkpoints/best/policy.pt")
+    parser.add_argument('--tensorflow-ckpt-path', type=str, default="/home/anthony/vlm-interventions/haco/run_main_exp/SAC_HumanInTheLoopEnv_cff06_00000_0_seed=0_2024-05-17_03-45-28")
+    parser.add_argument('--ckpt-start', type=int, default=1982)
+    parser.add_argument('--ckpt-end', type=int, default=1983)
+    parser.add_argument('--render', action='store_true', default=True, help='Enable rendering')
+    parser.add_argument('--output-dir', type=str, default="/home/anthony/vlm-interventions/haco/run_main_exp")
+    parser.add_argument('--window-size', type=int, nargs=2, default=[1600, 1100])
+    parser.add_argument('--map', type=str, default="CTO")
+    parser.add_argument('--save-data', action='store_true', help='Toggle saving of all outputs: trajectory, images, audio')
+
     args = parser.parse_args()
-    
+
     if args.use_pytorch:
         if not os.path.exists(args.pytorch_model_path):
             raise ValueError(f"PyTorch model path does not exist: {args.pytorch_model_path}")
@@ -407,8 +388,8 @@ if __name__ == '__main__':
             raise ValueError(f"TensorFlow checkpoint path does not exist: {args.tensorflow_ckpt_path}")
         if args.ckpt_start >= args.ckpt_end:
             raise ValueError("ckpt-start must be less than ckpt-end")
-            
+
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
-        
+
     main(args)

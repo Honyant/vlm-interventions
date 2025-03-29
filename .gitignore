@@ -7,6 +7,7 @@
 **/params.json
 **/params.pkl
 **/events.out.tfevents*
+**/checkpoint*
 **/checkpoint-*
 **/.is_checkpoint
 **/experiment_state-*
@@ -17,3 +18,4 @@
 **/audio_recordings
 **/trajectory_data
 **/.env
+**/corrected_trajectories
