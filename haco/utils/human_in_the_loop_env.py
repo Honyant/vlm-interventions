@@ -77,13 +77,25 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
         self.input_action = None
         self.accumulated_line_penalty = 0
         ret = super(HumanInTheLoopEnv, self).reset(*args, **kwargs)
+        try:
+            ctrl = self.engine.get_policy(self.vehicle.id).controller
+            if hasattr(ctrl, "ff_episode_reset"):
+                ctrl.ff_episode_reset()          # clears effects, disables AC, sets gain, recreates spring at center=0
+                # if you want the wheel to visibly “home” on reset, keep center at 0; otherwise set a small offset here:
+                # ctrl.ff_set_target(0.0)
+                # Keep spring enabled so you always feel neutral tension immediately.
+                if hasattr(ctrl, "ff_enable"):
+                    ctrl.ff_enable(True)
+        except Exception as e:
+            print("FF episode reset skipped:", e)
+
         if self.config["random_spawn"]:
-            self.config["vehicle_config"]["spawn_lane_index"] = (FirstPGBlock.NODE_1, FirstPGBlock.NODE_2,
-                                                                 self.engine.np_random.randint(3))
-        # keyboard is not as good as steering wheel, so set a small speed limit
+            self.config["vehicle_config"]["spawn_lane_index"] = (
+                FirstPGBlock.NODE_1, FirstPGBlock.NODE_2, self.engine.np_random.randint(3)
+            )
         self.vehicle.update_config({"max_speed": 25 if self.config["controller"] == "keyboard" else 40})
         return ret
-
+    
     def _get_step_return(self, actions, engine_info):
         o, r, d, engine_info = super(HumanInTheLoopEnv, self)._get_step_return(actions, engine_info)
         if self.config["in_replay"]:
@@ -94,6 +106,29 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
         engine_info["takeover_start"] = True if not last_t and self.t_o else False
         engine_info["takeover"] = self.t_o
         condition = engine_info["takeover_start"] if self.config["only_takeover_start_cost"] else self.t_o
+
+        try:
+            ctrl = self.engine.get_policy(self.vehicle.id).controller
+        except Exception:
+            ctrl = None
+
+        if ctrl and hasattr(ctrl, "ff_ready"):
+            is_takeover = bool(engine_info["takeover"])
+
+            # Always keep the spring enabled; just change its center depending on takeover
+            ctrl.ff_enable(True)
+
+            if is_takeover:
+                # Human is intervening: center the rim so it doesn't fight or drift
+                ctrl.ff_set_target(0.0)
+            else:
+                # Autonomous: pull rim toward current policy steering (scaled inside controller)
+                try:
+                    steering_cmd = float(actions[0]) if actions is not None else float(engine_info["raw_action"][0])
+                except Exception:
+                    steering_cmd = float(engine_info.get("raw_action", [0.0])[0])
+                steering_cmd = max(-1.0, min(1.0, steering_cmd))
+                ctrl.ff_set_target(steering_cmd)
 
         if not condition:
             self.total_takeover_cost += 0
@@ -137,7 +172,7 @@ class HumanInTheLoopEnv(SafeMetaDriveEnv):
             super(HumanInTheLoopEnv, self).render(text={
                 # "Steering": steering,
                 # "Acceleration": acceleration,
-                # "Intervention occuring": self.t_o,
+                "Intervention occuring": self.t_o,
                 "Time out of line": -self.accumulated_line_penalty/10
             })
         return ret

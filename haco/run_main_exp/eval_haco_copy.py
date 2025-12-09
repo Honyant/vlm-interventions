@@ -106,6 +106,7 @@ def get_pytorch_function(model_path):
 
     def _f(obs):
         try:
+    
             with torch.no_grad():
                 if torch.is_tensor(obs):
                     obs = obs.numpy()
@@ -117,6 +118,8 @@ def get_pytorch_function(model_path):
                 return {"default_policy": action_np}
         except Exception as e:
             print(f"Error computing actions: {e}")
+            import traceback
+            traceback.print_exc()
             raise
 
     return _f
@@ -169,7 +172,6 @@ def main(args):
         CKPT_END = args.ckpt_end
 
     EPISODE_NUM = args.num_episodes
-    RENDER = args.render
 
     env_config = {
         "manual_control": True,
@@ -178,13 +180,18 @@ def main(args):
         "window_size": (1600, 1100),
         "cos_similarity": True,
         "map": "CTO",
+        "offscreen_render": False,  # Enable offscreen rendering when not rendering
     }
 
     initialize_ray(test_mode=False, local_mode=False, num_gpus=0)
 
     def make_env(env_cfg=None):
         env_cfg = env_cfg or {}
-        env_cfg.update(dict(manual_control=True, use_render=RENDER))
+        env_cfg.update(dict(
+            manual_control=True, 
+            use_render=True,
+            offscreen_render=not True
+        ))
         return HumanInTheLoopEnv(env_cfg)
 
     super_data = defaultdict(list)
@@ -250,6 +257,8 @@ def main(args):
                         new_o, r, done, info = env.step(action_to_send)
                     except Exception as e:
                         print(f"Error during episode step {step}: {e}")
+                        import traceback
+                        traceback.print_exc()
                         break
 
                     for key in ["velocity", "steering", "step_reward", "acceleration"]:
@@ -267,7 +276,7 @@ def main(args):
 
                     frame_filename = f"frame_{trajectory_id}_{step}.jpg"
                     frame_path = os.path.join(video_dir, frame_filename)
-                    if SAVE_DATA and hasattr(env, 'engine'):
+                    if SAVE_DATA and True and hasattr(env, 'engine'):
                         img = PNMImage()
                         env.engine.win.getScreenshot(img)
                         frames[frame_path] = img
@@ -283,7 +292,7 @@ def main(args):
 
                 audio_filepath = audio_recorder.stop_recording(trajectory_id)
 
-                if step > 0 and SAVE_DATA:
+                if step > 0:
                     episode_length = step
                     arrive_dest = info.get("arrive_dest", False)
                     crash = info.get("crash", False)
@@ -321,29 +330,30 @@ def main(args):
                         "episode_crash_object_num": float(episode_data["episode_crash_object"]),
                     }
 
-                    traj_data = {
-                        "trajectory": trajectory,
-                        "metrics": episode_metrics,
-                        "audio_file": audio_filepath
-                    }
-
-                    filepath = os.path.join(traj_dir, f"trajectory_{trajectory_id}.json")
-                    with open(filepath, 'w') as f:
-                        json.dump(traj_data, f, cls=NumpyEncoder)
-
-                    with ThreadPoolExecutor(max_workers=threading.active_count() * 2) as executor:
-                        futures = [
-                            executor.submit(save_image, path, frame)
-                            for path, frame in frames.items()
-                        ]
-                        for future in futures:
-                            future.result()
-
                     super_data[ckpt_idx].append(episode_metrics)
+
+                    if SAVE_DATA:
+                        traj_data = {
+                            "trajectory": trajectory,
+                            "metrics": episode_metrics,
+                            "audio_file": audio_filepath
+                        }
+
+                        filepath = os.path.join(traj_dir, f"trajectory_{trajectory_id}.json")
+                        with open(filepath, 'w') as f:
+                            json.dump(traj_data, f, cls=NumpyEncoder)
+
+                        with ThreadPoolExecutor(max_workers=threading.active_count() * 2) as executor:
+                            futures = [
+                                executor.submit(save_image, path, frame)
+                                for path, frame in frames.items()
+                            ]
+                            for future in futures:
+                                future.result()
 
                 print(f"Episode {episode}/{EPISODE_NUM} completed")
 
-            if super_data[ckpt_idx] and SAVE_DATA:
+            if super_data[ckpt_idx]:
                 print(
                     f"CKPT:{ckpt_idx} | "
                     f"success_rate:{np.mean([ep['success_rate'] for ep in super_data[ckpt_idx]]):.4f}, "
@@ -353,6 +363,24 @@ def main(args):
     finally:
         env.close()
         audio_recorder.close()
+
+    # Print final summary statistics
+    if super_data:
+        all_episodes = [ep for episodes in super_data.values() for ep in episodes]
+        if all_episodes:
+            print("\n" + "="*60)
+            print("EVALUATION SUMMARY")
+            print("="*60)
+            print(f"Total episodes: {len(all_episodes)}")
+            print(f"Success rate: {np.mean([ep['success_rate'] for ep in all_episodes]):.4f}")
+            print(f"Crash rate: {np.mean([ep['crash_rate'] for ep in all_episodes]):.4f}")
+            print(f"Out of road rate: {np.mean([ep['out_of_road_rate'] for ep in all_episodes]):.4f}")
+            print(f"Mean episode reward: {np.mean([ep['raw_episode_reward'] for ep in all_episodes]):.4f}")
+            print(f"Mean episode cost: {np.mean([ep['cost'] for ep in all_episodes]):.4f}")
+            print(f"Mean takeover rate: {np.mean([ep['takeover_rate'] for ep in all_episodes]):.4f}")
+            print(f"Mean takeover count: {np.mean([ep['takeover_count'] for ep in all_episodes]):.4f}")
+            print(f"Mean velocity: {np.mean([ep['velocity_mean'] for ep in all_episodes]):.4f}")
+            print("="*60)
 
     if SAVE_DATA:
         try:
@@ -372,7 +400,7 @@ if __name__ == '__main__':
     parser.add_argument('--tensorflow-ckpt-path', type=str, default="/home/anthony/vlm-interventions/haco/run_main_exp/SAC_HumanInTheLoopEnv_cff06_00000_0_seed=0_2024-05-17_03-45-28")
     parser.add_argument('--ckpt-start', type=int, default=1982)
     parser.add_argument('--ckpt-end', type=int, default=1983)
-    parser.add_argument('--render', action='store_true', default=True, help='Enable rendering')
+    parser.add_argument('--render', action='store_true', default=False, help='Enable rendering (disabled by default for headless)')
     parser.add_argument('--output-dir', type=str, default="/home/anthony/vlm-interventions/haco/run_main_exp")
     parser.add_argument('--window-size', type=int, nargs=2, default=[1600, 1100])
     parser.add_argument('--map', type=str, default="CTO")

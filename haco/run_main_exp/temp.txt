@@ -1,0 +1,94 @@
+  File "eval_haco_copy.py", line 395, in <module>
+    main(args)
+  File "eval_haco_copy.py", line 206, in main
+    compute_actions = get_pytorch_function(MODEL_PATH)
+  File "eval_haco_copy.py", line 94, in get_pytorch_function
+    policy = ImprovedBCPolicy(dummy_env, dummy_action_space, config)
+  File "/home/anthony/vlm-interventions/haco/run_main_exp/bc_trainer.py", line 146, in __init__
+    raise ValueError("data_dir must be provided for behavioral cloning")
+ValueError: data_dir must be provided for behavioral cloning
+
+FF init failed: [Errno 28] No space left on device
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 17/20 completed
+FF init failed: [Errno 28] No space left on device
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 18/20 completed
+FF init failed: [Errno 28] No space left on device
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 19/20 completed
+ALSA lib pcm_usb_stream.c:481:(_snd_pcm_usb_stream_open) Invalid card 'card'
+ALSA lib pcm_dmix.c:1000:(snd_pcm_dmix_open) unable to open slave
+[DBG] Loading checkpoint: /home/anthony/vlm-interventions/haco/run_main_exp/checkpoints_march/best/policy.pt
+[DBG] Inferred obs_dim from obs_mean: 259
+[DBG] Inferred act_dim from 'network.8.weight': 2
+[DBG] Building policy with base_config: hidden_dim=256, layers=2
+[DBG] Policy constructed and weights loaded.
+[DBG] obs_mean.shape=(259,), obs_std.shape=(259,)
+Known pipe types:
+  glxGraphicsPipe
+(1 aux display modules not yet loaded.)
+WARNING:root:Since your screen is too small (1920, 1080), we resize the window to (1413, 972).
+
+========== compute_actions call ==========
+[DBG] Raw obs_in type=<class 'numpy.ndarray'>
+[DBG] _flatten_obs_for_debug: type(obs)=<class 'numpy.ndarray'>
+[DBG] np.asarray -> shape=(259,), dtype=float32
+[DBG] flat shape=(259,), dtype=float32
+[DBG] flat stats: min=0.0000, max=1.0000, nan=False, inf=False
+[DBG] batch shape=(1, 259), is_single=True
+[DBG] obs_norm shape=(1, 259), slice[0,:5]=[ 0.19658938 -0.19658938  0.02095838 -3.6757433  -0.02791558]
+[DBG] action shape=(1, 2), first row=[0.00539956 0.9952145 ]
+[DBG] compute_actions done.
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 0/20 completed
+
+========== compute_actions call ==========
+[DBG] Raw obs_in type=<class 'numpy.ndarray'>
+[DBG] _flatten_obs_for_debug: type(obs)=<class 'numpy.ndarray'>
+[DBG] np.asarray -> shape=(259,), dtype=float32
+[DBG] flat shape=(259,), dtype=float32
+[DBG] flat stats: min=0.0000, max=1.0000, nan=False, inf=False
+[DBG] batch shape=(1, 259), is_single=True
+[DBG] obs_norm shape=(1, 259), slice[0,:5]=[ 0.19658938 -0.19658938  0.02095838 -3.6757433  -0.02791558]
+[DBG] action shape=(1, 2), first row=[0.00539956 0.9952145 ]
+[DBG] compute_actions done.
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 1/20 completed
+
+========== compute_actions call ==========
+[DBG] Raw obs_in type=<class 'numpy.ndarray'>
+[DBG] _flatten_obs_for_debug: type(obs)=<class 'numpy.ndarray'>
+[DBG] np.asarray -> shape=(259,), dtype=float32
+[DBG] flat shape=(259,), dtype=float32
+[DBG] flat stats: min=0.0000, max=1.0000, nan=False, inf=False
+[DBG] batch shape=(1, 259), is_single=True
+[DBG] obs_norm shape=(1, 259), slice[0,:5]=[ 0.19658938 -0.19658938  0.02095838 -3.6757433  -0.02791558]
+[DBG] action shape=(1, 2), first row=[0.00539956 0.9952145 ]
+[DBG] compute_actions done.
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 2/20 completed
+
+========== compute_actions call ==========
+[DBG] Raw obs_in type=<class 'numpy.ndarray'>
+[DBG] _flatten_obs_for_debug: type(obs)=<class 'numpy.ndarray'>
+[DBG] np.asarray -> shape=(259,), dtype=float32
+[DBG] flat shape=(259,), dtype=float32
+[DBG] flat stats: min=0.0000, max=1.0000, nan=False, inf=False
+[DBG] batch shape=(1, 259), is_single=True
+[DBG] obs_norm shape=(1, 259), slice[0,:5]=[ 0.19658938 -0.19658938  0.02095838 -3.6757433  -0.02791558]
+[DBG] action shape=(1, 2), first row=[0.00539956 0.9952145 ]
+[DBG] compute_actions done.
+Error during episode step 0: only integers, slices (`:`), ellipsis (`...`), numpy.newaxis (`None`) and integer or boolean arrays are valid indices
+Episode 3/20 completed
+
+========== compute_actions ==========
+[DBG] raw obs -> shape=(259,), dtype=float32, type=<class 'numpy.ndarray'>
+[DBG] obs_flat[:6]=[0.29166666 0.29166666 0.5        0.01234568 0.5        0.5       ] ...
+[DBG] obs_norm[:6]=[ 0.19658938 -0.19658938  0.02095838 -3.6757433  -0.02791558 -0.02658319] ...
+[DBG] raw act np -> shape=(2,), dtype=float32, value=[0.00539956 0.9952145 ]
+[DBG] returning list action -> type=<class 'list'>, value=[0.005399560555815697, 0.9952145218849182]
+Error during episode step 0: list indices must be integers or slices, not str
+Episode 5/20 completed
+
+

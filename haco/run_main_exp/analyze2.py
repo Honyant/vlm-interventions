@@ -100,7 +100,6 @@ def process_trajectory_file(trajectory_file, image_dir, audio_dir, corrected_dir
     if IGNORE_FAILED_TRAJECTORIES and data.get("metrics", {}).get("success_rate") == 0:
         print(f"Skipping {os.path.basename(trajectory_file)}: failed trajectory.")
         return
-    return
     segments = find_intervention_segments(trajectory_data)
     if not segments:
         print(f"No interventions found in {os.path.basename(trajectory_file)}. Copying file without changes.")
@@ -171,21 +170,22 @@ def process_trajectory_file(trajectory_file, image_dir, audio_dir, corrected_dir
                 base64_image = ""
 
         # Construct the prompt for GPT-4o.
+#Transcript (timestamps in seconds, with timesteps_per_second = {timesteps_per_second}):
+#{transcript_text}
         input_text = f"""Trajectory data for context window (indices {context_start} to {context_end}):
 {trajectory_text}
 
-Transcript (timestamps in seconds, with timesteps_per_second = {timesteps_per_second}):
-{transcript_text}
 
 Analyze the sequence of driving actions before and during the intervention. For each action frame in this context window:
 1. Provide a brief text description suggesting better pre-intervention actions.
 2. Output a JSON array with objects containing the index and corrected (steering, acceleration) pairs for that index.
 - Use negative acceleration values for deceleration.
+- After values must be in [-1,1]
 - Include 3 significant figures.
 - Start from index {context_start}.
 - Cover all time steps in this context window.
 - If the intervention is not happening, just return the original action.
-Example format YOU MUST FOLLOW:
+Example format YOU MUST FOLLOW (the vectors for steering mean before and after (after is what you change it to)):
 ```json
 [
   {{
@@ -203,12 +203,13 @@ Example format YOU MUST FOLLOW:
                     {
                         "type": "text",
                         "text": input_text
-                    },
+                    }
+                    ,
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
+                       "type": "image_url",
+                       "image_url": {
+                           "url": f"data:image/jpeg;base64,{base64_image}"
+                       }
                     }
                 ]
             }
@@ -245,6 +246,7 @@ Example format YOU MUST FOLLOW:
                 # Apply the corrections to the trajectory data.
                 for correction in corrections:
                     idx = correction['index']
+                    if idx < context_start or idx > context_end: continue 
                     new_steering = correction['steering']
                     new_acceleration = correction['acceleration']
                     print(f"New steering: {new_steering}, new acceleration: {new_acceleration}")
@@ -257,7 +259,7 @@ Example format YOU MUST FOLLOW:
                                 valid_values = False
                                 break
                         if valid_values:
-                            trajectory_data[idx][1] = new_steering + new_acceleration  # Concatenate lists
+                            trajectory_data[idx][1] = [new_steering[1]] + [new_acceleration[1]]  # Concatenate lists
                         else:
                             raise ValueError(f"Invalid values in steering {new_steering} or acceleration {new_acceleration} for index {idx}")
                     else:

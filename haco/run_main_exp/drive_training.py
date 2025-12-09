@@ -39,7 +39,7 @@ def get_pytorch_function(model_path):
 if __name__ == '__main__':
     # hyperparameters
     MODEL_PATH = "/home/anthony/HACO/haco/run_main_exp/checkpoints/best/policy.pt"
-    EPISODE_NUM_PER_CKPT = 1
+    EPISODE_NUM_PER_CKPT = 10
     RENDER = True
     
     env_config = {
