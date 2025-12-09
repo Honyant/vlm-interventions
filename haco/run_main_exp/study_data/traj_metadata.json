@@ -1,0 +1,236 @@
+{
+    "02920250915": {
+        "bad_eps": [],
+        "name": "garrett",
+        "practice": true,
+        "flawed": true
+    },
+    "092920250949": {
+        "bad_eps": [],
+        "name": "garrett",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251004": {
+        "bad_eps": [7,10,11,12,15,-1],
+        "name": "garrett",
+        "practice": false,
+        "flawed": true
+    },
+    "092920251010": {
+        "bad_eps": [1],
+        "name": "garrett",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251019": {
+        "bad_eps": [],
+        "name": "garrett",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251038": {
+        "bad_eps": [],
+        "name": "garrett",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251050": {
+        "bad_eps": [],
+        "name": "nathan",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251054": {
+        "bad_eps": [],
+        "name": "nathan",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251110": {
+        "bad_eps": [],
+        "name": "nathan",
+        "practice": true,
+        "flawed": true
+    },
+    "092920251602": {
+        "bad_eps": [],
+        "name": "jenny",
+        "practice": true,
+        "flawed": false
+    },
+    "092920251606": {
+        "bad_eps": [],
+        "name": "jenny",
+        "practice": true,
+        "flawed": false
+    },
+    "092920251610": {
+        "bad_eps": [],
+        "name": "jenny",
+        "practice": true,
+        "flawed": false
+    },
+    "092920251621": {
+        "bad_eps": [],
+        "name": "jenny",
+        "practice": false,
+        "flawed": false
+    },
+    "092920251639": {
+        "bad_eps": [],
+        "name": "jenny",
+        "practice": false,
+        "flawed": false
+    },
+    "093020250948": {
+        "bad_eps": [],
+        "name": "haroon",
+        "practice": true,
+        "flawed": false
+    },
+    "093020251007": {
+        "bad_eps": [0,15],
+        "name": "haroon",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251012": {
+        "bad_eps": [],
+        "name": "haroon",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251021": {
+        "bad_eps": [9],
+        "name": "haroon",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251050": {
+        "bad_eps": [],
+        "name": "haroon",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251107": {
+        "bad_eps": [],
+        "name": "ivory",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251130": {
+        "bad_eps": [],
+        "name": "frank",
+        "practice": true,
+        "flawed": false
+    },
+    "093020251143": {
+        "bad_eps": [4],
+        "name": "frank",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251157": {
+        "bad_eps": [],
+        "name": "frank",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251201": {
+        "bad_eps": [3],
+        "name": "frank",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251239": {
+        "bad_eps": [],
+        "name": "frank",
+        "practice": true,
+        "flawed": false
+    },
+    "093020251247": {
+        "bad_eps": [],
+        "name": "albert",
+        "practice": true,
+        "flawed": false
+    },
+    "093020251305": {
+        "bad_eps": [18],
+        "name": "albert",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251342": {
+        "bad_eps": [],
+        "name": "albert",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251354": {
+        "bad_eps": [13, 17],
+        "name": "phuc",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251358": {
+        "bad_eps": [0, 16],
+        "name": "phuc",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251410": {
+        "bad_eps": [],
+        "name": "phuc",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251449": {
+        "bad_eps": [],
+        "name": "victoria",
+        "practice": true,
+        "flawed": false
+    },
+    "093020251458": {
+        "bad_eps": [],
+        "name": "victoria",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251501": {
+        "bad_eps": [],
+        "name": "victoria",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251515": {
+        "bad_eps": [],
+        "name": "victoria",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251519": {
+        "bad_eps": [],
+        "name": "victoria",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251735": {
+        "bad_eps": [],
+        "name": "payam",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251738": {
+        "bad_eps": [],
+        "name": "payam",
+        "practice": false,
+        "flawed": false
+    },
+    "093020251749": {
+        "bad_eps": [],
+        "name": "payam",
+        "practice": false,
+        "flawed": false
+    }
+}

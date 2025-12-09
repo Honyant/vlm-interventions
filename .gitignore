@@ -15,7 +15,12 @@
 **/videos
 **/videos_cop
 **/videos_old
-**/audio_recordings
-**/trajectory_data
+**/audio_recordings*
+**/videos*
+**/trajectory_data*
 **/.env
 **/corrected_trajectories
+
+
+**/pre_study_data
+**/study_assets
