@@ -3,60 +3,60 @@
         "bad_eps": [],
         "name": "garrett",
         "practice": true,
-        "flawed": true
+        "flawed": false
     },
     "092920250949": {
         "bad_eps": [],
         "name": "garrett",
         "practice": true,
-        "flawed": true
+        "flawed": false
     },
     "092920251004": {
         "bad_eps": [7,10,11,12,15,-1],
         "name": "garrett",
         "practice": false,
-        "flawed": true
+        "flawed": false
     },
     "092920251010": {
         "bad_eps": [1],
         "name": "garrett",
-        "practice": true,
-        "flawed": true
+        "practice": false,
+        "flawed": false
     },
     "092920251019": {
         "bad_eps": [],
         "name": "garrett",
-        "practice": true,
-        "flawed": true
+        "practice": false,
+        "flawed": false
     },
     "092920251038": {
         "bad_eps": [],
         "name": "garrett",
-        "practice": true,
-        "flawed": true
+        "practice": false,
+        "flawed": false
     },
     "092920251050": {
         "bad_eps": [],
         "name": "nathan",
         "practice": true,
-        "flawed": true
+        "flawed": false
     },
     "092920251054": {
         "bad_eps": [],
         "name": "nathan",
         "practice": true,
-        "flawed": true
+        "flawed": false
     },
     "092920251110": {
         "bad_eps": [],
         "name": "nathan",
-        "practice": true,
-        "flawed": true
+        "practice": false,
+        "flawed": false
     },
     "092920251602": {
         "bad_eps": [],
-        "name": "jenny",
-        "practice": true,
+        "name": "nathan",
+        "practice": false,
         "flawed": false
     },
     "092920251606": {

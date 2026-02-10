@@ -36,6 +36,8 @@ class MyTakeoverPolicy(TakeoverPolicy):
                 self.controller = MyKeyboardController(False)
             else:
                 raise ValueError("Unknown Policy: {}".format(config["controller"]))
+        else:
+            self.controller = None
         self.takeover = False
 
 

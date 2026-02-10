@@ -20,7 +20,7 @@
 **/trajectory_data*
 **/.env
 **/corrected_trajectories
-
+**/haco/run_main_exp/eval_results
 
 **/pre_study_data
 **/study_assets

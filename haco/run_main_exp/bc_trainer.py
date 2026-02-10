@@ -37,14 +37,44 @@ class DummyEnv(gym.Env):
 # Data loader (preserves adjacency)
 # ----------------------------
 def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[str, os.PathLike]]]) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    """Load, merge, and split demonstration data from trajectory files, preserving adjacency."""
+    """Load, merge, and split demonstration data from trajectory files, preserving adjacency.
+
+    Supports VLM metadata in trajectory entries:
+    - If entry has 5+ elements and element[4] is a float in [-1, 1]: treated as weight
+    - If entry has 5+ elements and element[4] is a bool: treated as filtering flag
+    """
     def read_traj(path: Path):
         with path.open('r') as f:
             path_data = json.load(f)
-        traj = path_data["trajectory"]  # list of [obs, act]
-        obs = [t[0] for t in traj]
-        actions = [t[1] for t in traj]
-        return np.asarray(obs, dtype=np.float32), np.asarray(actions, dtype=np.float32)
+        traj = path_data["trajectory"]  # list of [obs, act, intervention, image, metadata?]
+
+        obs = []
+        actions = []
+        weights = []
+
+        for t in traj:
+            # Check for filtering flag (5th element is boolean)
+            if len(t) >= 5 and isinstance(t[4], bool):
+                if not t[4]:  # include=False, skip this sample
+                    continue
+
+            obs.append(t[0])
+            actions.append(t[1])
+
+            # Check for weight (5th element is float)
+            if len(t) >= 5 and isinstance(t[4], (int, float)) and not isinstance(t[4], bool):
+                weights.append(float(t[4]))
+            else:
+                weights.append(1.0)  # default weight
+
+        if not obs:  # All samples filtered out
+            return None, None, None
+
+        return (
+            np.asarray(obs, dtype=np.float32),
+            np.asarray(actions, dtype=np.float32),
+            np.asarray(weights, dtype=np.float32),
+        )
 
     if isinstance(data_source, (str, os.PathLike)):
         dir_path = Path(data_source)
@@ -56,10 +86,13 @@ def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[
     if not file_paths:
         raise ValueError(f"No .json trajectories found in {data_source}")
 
-    obs_list, act_list, prev_obs_list, prev_act_list, has_prev_list = [], [], [], [], []
+    obs_list, act_list, prev_obs_list, prev_act_list, has_prev_list, weight_list = [], [], [], [], [], []
 
     for file_path in file_paths:
-        o, a = read_traj(file_path)
+        result = read_traj(file_path)
+        if result[0] is None:  # All samples filtered out
+            continue
+        o, a, w = result
         n = len(o)
         if n == 0:
             continue
@@ -69,7 +102,7 @@ def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[
         has_prev = np.zeros((n, 1), dtype=np.float32)
         has_prev[1:, 0] = 1.0
 
-        obs_list.append(o); act_list.append(a)
+        obs_list.append(o); act_list.append(a); weight_list.append(w)
         prev_obs_list.append(prev_o); prev_act_list.append(prev_a)
         has_prev_list.append(has_prev)
 
@@ -78,6 +111,7 @@ def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[
     merged_prev_obs = np.concatenate(prev_obs_list, axis=0)
     merged_prev_actions = np.concatenate(prev_act_list, axis=0)
     merged_has_prev = np.concatenate(has_prev_list, axis=0)
+    merged_weights = np.concatenate(weight_list, axis=0)
 
     # Stats & quality checks (informational)
     print(f"\nDataset Statistics:")
@@ -87,6 +121,12 @@ def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[
     print(f"Std: {np.std(merged_actions, axis=0)}")
     print(f"Min: {np.min(merged_actions, axis=0)}")
     print(f"Max: {np.max(merged_actions, axis=0)}")
+    print(f"\nWeight statistics:")
+    print(f"Mean: {np.mean(merged_weights):.3f}")
+    print(f"Std: {np.std(merged_weights):.3f}")
+    print(f"Min: {np.min(merged_weights):.3f}")
+    print(f"Max: {np.max(merged_weights):.3f}")
+    print(f"Non-default weights: {np.sum(merged_weights != 1.0)} ({100*np.mean(merged_weights != 1.0):.1f}%)")
     print(f"\nData Quality Checks:")
     print(f"NaN in observations: {np.isnan(merged_obs).any()}")
     print(f"Inf in observations: {np.isinf(merged_obs).any()}")
@@ -105,6 +145,7 @@ def load_demonstration_data(data_source: Union[str, os.PathLike, Sequence[Union[
             "prev_obs": merged_prev_obs[idx],
             "prev_act": merged_prev_actions[idx],
             "has_prev": merged_has_prev[idx],   # shape [B, 1]
+            "weights": merged_weights[idx],     # shape [B,]
         }
 
     train_data, val_data = pack(train_idx), pack(val_idx)
@@ -239,7 +280,7 @@ class ImprovedBCPolicy(Policy):
         return sl
 
     def learn_on_batch(self, samples=None):
-        """Train on a batch with temporal-aware losses."""
+        """Train on a batch with temporal-aware losses and sample weighting."""
         if self.train is None or self.val is None:
             raise RuntimeError("Demonstration data not loaded; provide data_source or data_dir in the config.")
         sl = self._sample_train_slice()
@@ -249,6 +290,11 @@ class ImprovedBCPolicy(Policy):
         prev_obs_batch = torch.from_numpy(self.train["prev_obs"][sl]).float()
         prev_act_batch = torch.from_numpy(self.train["prev_act"][sl]).float()
         has_prev       = torch.from_numpy(self.train["has_prev"][sl]).float()  # [B,1]
+        sample_weights = torch.from_numpy(self.train["weights"][sl]).float()   # [B,]
+
+        # Normalize weights to have mean=1 within batch (preserves relative importance)
+        sample_weights = sample_weights / (sample_weights.abs().mean() + 1e-8)
+        sample_weights = sample_weights.unsqueeze(1)  # [B, 1] for broadcasting
 
         if self.w_jac > 0.0:
             obs_batch.requires_grad_(True)
@@ -261,25 +307,26 @@ class ImprovedBCPolicy(Policy):
         with torch.no_grad():                            # do not backprop through â_{t-1}
             pred_t_minus_1 = self.network(prev_obs_batch)
 
-        # Base target loss (Huber)
-        base_loss = torch.nn.SmoothL1Loss()(pred_t, act_batch)
+        # Base target loss (Huber) - weighted per sample
+        per_sample_loss = torch.nn.SmoothL1Loss(reduction='none')(pred_t, act_batch)
+        base_loss = torch.mean(sample_weights * per_sample_loss)
 
-        # Delta-matching loss
+        # Delta-matching loss (weighted)
         delta_pred = pred_t - pred_t_minus_1
         delta_true = act_batch - prev_act_batch
         mask = has_prev
         if mask.ndim == 2 and pred_t.ndim == 2:
             mask = mask.expand_as(pred_t)
-        delta_match_loss = torch.mean(mask * (delta_pred - delta_true).pow(2))
+        delta_match_loss = torch.mean(sample_weights * mask * (delta_pred - delta_true).pow(2))
 
-        # Jump-hinge loss
+        # Jump-hinge loss (weighted)
         delta_norm = torch.linalg.norm(delta_pred, dim=1, keepdim=True)  # [B,1]
         jump_excess = torch.relu(delta_norm - self.delta_max)
-        jump_hinge_loss = torch.mean(has_prev * (jump_excess.pow(2)))
+        jump_hinge_loss = torch.mean(sample_weights * has_prev * (jump_excess.pow(2)))
 
-        # Saturation margin loss
+        # Saturation margin loss (weighted)
         sat_excess = torch.relu(pred_t.abs() - self.sat_margin)
-        sat_loss = torch.mean(sat_excess.pow(2))
+        sat_loss = torch.mean(sample_weights * sat_excess.pow(2))
 
         # Optional Jacobian penalty
         if self.w_jac > 0.0:
@@ -552,6 +599,7 @@ def run_bc_training(
     sat_margin: float = 0.9,
     w_jac: float = 0.0,
     checkpoint_freq: int = 100,
+    checkpoint_dir: str = "./checkpoints",
 ):
     if not ray.is_initialized():
         ray.init()
@@ -599,14 +647,14 @@ def run_bc_training(
             print(f"Iteration {i}: " + ", ".join(fmt(k) for k in metrics))
         if result.get("val_total", float("inf")) < best_val:
             best_val = result["val_total"]
-            checkpoint_dir = "./checkpoints/best"
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint_path = trainer.save_checkpoint(checkpoint_dir)
+            best_dir = os.path.join(checkpoint_dir, "best")
+            os.makedirs(best_dir, exist_ok=True)
+            checkpoint_path = trainer.save_checkpoint(best_dir)
             print(f"New best model saved to {checkpoint_path}")
         if checkpoint_freq and i % checkpoint_freq == 0:
-            checkpoint_dir = f"./checkpoints/iter_{i}"
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint_path = trainer.save_checkpoint(checkpoint_dir)
+            iter_dir = os.path.join(checkpoint_dir, f"iter_{i}")
+            os.makedirs(iter_dir, exist_ok=True)
+            checkpoint_path = trainer.save_checkpoint(iter_dir)
             print(f"Checkpoint saved to {checkpoint_path}")
     return trainer
 

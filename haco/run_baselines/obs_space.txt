@@ -1,1 +1,0 @@
-Tensor("default_policy/observations_1:0", shape=(?, 259), dtype=float32)Tensor("default_policy/observations_1:0", shape=(?, 259), dtype=float32)Tensor("default_policy/value_out_1/BiasAdd:0", shape=(?, 1), dtype=float32)

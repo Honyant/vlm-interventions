@@ -58,14 +58,21 @@ class PipelineConfig:
     corrected_dir: Path
     checkpoint_dir: Path
 
-    # VLM correction settings
+    # VLM provider settings
+    vlm_provider: str = "anthropic"  # "anthropic" or "openai"
     openai_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    # VLM correction settings
     context_steps: int = 10
     timesteps_per_second: int = 10
     max_retries: int = 5
     use_images: bool = True
     use_transcript: bool = True
     image_sample_rate: int = 3  # sample every Nth image for grid
+
+    # VLM correction strategy
+    correction_strategy: str = "action_correction"  # action_correction, weighting, filtering, rejection
 
     # Parallel processing
     num_workers: int = 4
@@ -83,6 +90,11 @@ class PipelineConfig:
     delta_max: float = 0.15
     sat_margin: float = 0.9
     checkpoint_freq: int = 100
+
+    # Experiment mode
+    experiment_name: str = "default"
+    training_mode: str = "vlm_corrected"  # pretrained_only, intervention_only, hg_dagger, vlm_corrected
+    include_pre_intervention: bool = False  # include pre-intervention data in training
 
     # Behavior flags
     skip_correction: bool = False
@@ -296,6 +308,7 @@ def build_vlm_prompt(
     segment: InterventionSegment,
     transcript_text: str = "",
     use_transcript: bool = True,
+    correction_strategy: str = "action_correction",
 ) -> str:
     """
     Build the prompt for the VLM to analyze and correct the trajectory.
@@ -305,33 +318,40 @@ def build_vlm_prompt(
         segment: The intervention segment to analyze
         transcript_text: Optional transcript text for the time range
         use_transcript: Whether to include transcript in prompt
+        correction_strategy: One of "action_correction", "weighting", "filtering", "rejection"
 
     Returns:
         Formatted prompt string
     """
     trajectory_text = build_trajectory_context(trajectory, segment)
 
-    prompt = f"""Trajectory data for context window (indices {segment.context_start} to {segment.end_idx}):
+    prompt = f"""You are analyzing a driving trajectory where a human intervened to correct the autonomous agent's behavior.
+
+Trajectory data for context window (indices {segment.context_start} to {segment.end_idx}):
 {trajectory_text}
 """
 
     if use_transcript and transcript_text:
         prompt += f"""
-Transcript of human speech during this segment:
+Transcript of human speech during this segment (may contain explanations of why intervention occurred):
 {transcript_text}
 """
 
-    prompt += f"""
+    if correction_strategy == "action_correction":
+        prompt += f"""
 Analyze the sequence of driving actions before and during the intervention. For each action frame in this context window:
-1. Provide a brief text description suggesting better pre-intervention actions.
-2. Output a JSON array with objects containing the index and corrected (steering, acceleration) pairs for that index.
+1. Consider what the agent should have done to avoid needing intervention.
+2. Output a JSON array with objects containing the index and corrected (steering, acceleration) pairs.
+
+Rules:
 - Use negative acceleration values for deceleration.
-- After values must be in [-1,1]
+- All values must be in [-1,1]
 - Include 3 significant figures.
 - Start from index {segment.context_start}.
 - Cover all time steps in this context window.
-- If the intervention is not happening, just return the original action.
-Example format YOU MUST FOLLOW (the vectors for steering mean before and after (after is what you change it to)):
+- If the intervention is not happening at that step, return the original action.
+
+Example format YOU MUST FOLLOW:
 ```json
 [
   {{
@@ -342,6 +362,70 @@ Example format YOU MUST FOLLOW (the vectors for steering mean before and after (
   ...
 ]
 ```"""
+
+    elif correction_strategy == "weighting":
+        prompt += f"""
+Analyze each timestep and assign a weight indicating how valuable this data point is for training.
+- weight = 1.0: Excellent driving behavior, use as-is
+- weight = 0.5 to 0.99: Good behavior with minor issues
+- weight = 0.0: Neutral, neither good nor bad
+- weight = -0.5 to -0.99: Problematic behavior, should be avoided
+- weight = -1.0: Completely wrong behavior
+
+Output a JSON array with objects containing the index and weight for each timestep.
+Start from index {segment.context_start}, cover all timesteps.
+
+Example format:
+```json
+[
+  {{"index": 192, "weight": 0.8}},
+  {{"index": 193, "weight": -0.5}},
+  ...
+]
+```"""
+
+    elif correction_strategy == "filtering":
+        prompt += f"""
+Analyze each timestep and decide whether it should be INCLUDED in the training data.
+- include: true - This is good driving behavior, use for training
+- include: false - This is problematic behavior, exclude from training
+
+Output a JSON array with objects containing the index and include boolean for each timestep.
+Start from index {segment.context_start}, cover all timesteps.
+
+Example format:
+```json
+[
+  {{"index": 192, "include": true}},
+  {{"index": 193, "include": false}},
+  ...
+]
+```"""
+
+    elif correction_strategy == "rejection":
+        prompt += f"""
+Analyze each timestep and determine if any action directions should be REJECTED (zeroed out in training).
+This helps the policy avoid certain dangerous maneuvers.
+
+Possible reject_direction values:
+- "left": Reject leftward steering (negative steering values should be zeroed)
+- "right": Reject rightward steering (positive steering values should be zeroed)
+- "accelerate": Reject acceleration (positive acceleration should be zeroed)
+- "decelerate": Reject deceleration (negative acceleration should be zeroed)
+- "none": No rejection needed, action is fine as-is
+
+Output a JSON array with objects containing the index and reject_direction for each timestep.
+Start from index {segment.context_start}, cover all timesteps.
+
+Example format:
+```json
+[
+  {{"index": 192, "reject_direction": "none"}},
+  {{"index": 193, "reject_direction": "left"}},
+  ...
+]
+```"""
+
     return prompt
 
 
@@ -382,6 +466,7 @@ def build_vlm_request(
         segment,
         transcript_text,
         use_transcript=config.use_transcript,
+        correction_strategy=config.correction_strategy,
     )
 
     result: dict[str, Any] = {"prompt": prompt}
@@ -417,19 +502,99 @@ def build_vlm_request(
 # VLM API Interaction
 # =============================================================================
 
-def query_vlm_for_corrections(
+def query_anthropic_vlm(
     request: dict[str, Any],
     config: PipelineConfig,
-) -> list[dict]:
+) -> str:
     """
-    Query GPT-4o for trajectory corrections.
+    Query Anthropic Claude for trajectory corrections using extended thinking.
 
     Args:
         request: Dict with 'prompt' and optionally 'image_base64'
         config: Pipeline configuration
 
     Returns:
-        List of correction dicts with 'index', 'steering', 'acceleration'
+        Raw response content string
+
+    Raises:
+        VLMError: If API call fails after all retries
+    """
+    content: list[dict] = []
+
+    if "image_base64" in request:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": request["image_base64"],
+            },
+        })
+
+    content.append({"type": "text", "text": request["prompt"]})
+
+    messages = [{"role": "user", "content": content}]
+
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 16000,
+        "thinking": {
+            "type": "enabled",
+            "budget_tokens": 10000
+        },
+        "messages": messages,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": config.anthropic_api_key,
+        "anthropic-version": "2023-06-01",
+    }
+
+    last_error = None
+    for attempt in range(config.max_retries):
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=180,  # Extended thinking can take longer
+            )
+            response.raise_for_status()
+
+            response_json = response.json()
+            # Extract text content from response (skip thinking blocks)
+            response_content = ""
+            for block in response_json.get("content", []):
+                if block.get("type") == "text":
+                    response_content = block.get("text", "")
+                    break
+
+            return response_content
+
+        except requests.RequestException as e:
+            last_error = VLMError(f"Anthropic API request failed: {e}")
+            logger.warning(f"Attempt {attempt + 1}/{config.max_retries} failed: {e}")
+        except Exception as e:
+            last_error = VLMError(f"Unexpected error: {e}")
+            logger.warning(f"Attempt {attempt + 1}/{config.max_retries} failed: {e}")
+
+    raise last_error or VLMError("All retry attempts failed")
+
+
+def query_openai_vlm(
+    request: dict[str, Any],
+    config: PipelineConfig,
+) -> str:
+    """
+    Query OpenAI GPT-4o for trajectory corrections.
+
+    Args:
+        request: Dict with 'prompt' and optionally 'image_base64'
+        config: Pipeline configuration
+
+    Returns:
+        Raw response content string
 
     Raises:
         VLMError: If API call fails after all retries
@@ -468,25 +633,10 @@ def query_vlm_for_corrections(
 
             response_json = response.json()
             response_content = response_json["choices"][0]["message"]["content"]
-
-            # Extract JSON array from response
-            json_start = response_content.find("[")
-            json_end = response_content.rfind("]") + 1
-            if json_start == -1 or json_end == 0:
-                raise VLMError("No JSON array found in VLM response")
-
-            json_str = response_content[json_start:json_end]
-            corrections = json.loads(json_str)
-
-            # Validate corrections format
-            validate_corrections(corrections)
-            return corrections
+            return response_content
 
         except requests.RequestException as e:
-            last_error = VLMError(f"API request failed: {e}")
-            logger.warning(f"Attempt {attempt + 1}/{config.max_retries} failed: {e}")
-        except json.JSONDecodeError as e:
-            last_error = VLMError(f"Failed to parse JSON response: {e}")
+            last_error = VLMError(f"OpenAI API request failed: {e}")
             logger.warning(f"Attempt {attempt + 1}/{config.max_retries} failed: {e}")
         except Exception as e:
             last_error = VLMError(f"Unexpected error: {e}")
@@ -495,9 +645,53 @@ def query_vlm_for_corrections(
     raise last_error or VLMError("All retry attempts failed")
 
 
-def validate_corrections(corrections: list[dict]) -> None:
+def query_vlm_for_corrections(
+    request: dict[str, Any],
+    config: PipelineConfig,
+) -> list[dict]:
     """
-    Validate the format of VLM corrections.
+    Query VLM (Anthropic or OpenAI) for trajectory corrections.
+
+    Args:
+        request: Dict with 'prompt' and optionally 'image_base64'
+        config: Pipeline configuration
+
+    Returns:
+        List of correction dicts with 'index', 'steering', 'acceleration'
+
+    Raises:
+        VLMError: If API call fails after all retries
+    """
+    # Select VLM provider
+    if config.vlm_provider == "anthropic":
+        response_content = query_anthropic_vlm(request, config)
+    else:
+        response_content = query_openai_vlm(request, config)
+
+    # Extract JSON array from response
+    try:
+        json_start = response_content.find("[")
+        json_end = response_content.rfind("]") + 1
+        if json_start == -1 or json_end == 0:
+            raise VLMError("No JSON array found in VLM response")
+
+        json_str = response_content[json_start:json_end]
+        corrections = json.loads(json_str)
+
+        # Validate corrections format
+        validate_corrections(corrections, config.correction_strategy)
+        return corrections
+    except json.JSONDecodeError as e:
+        raise VLMError(f"Failed to parse JSON response: {e}")
+
+
+def validate_corrections(corrections: list[dict], strategy: str = "action_correction") -> None:
+    """
+    Validate the format of VLM corrections based on strategy.
+
+    Args:
+        corrections: List of correction dicts
+        strategy: One of "action_correction", "weighting", "filtering", "rejection"
 
     Raises:
         VLMError: If corrections format is invalid
@@ -505,21 +699,58 @@ def validate_corrections(corrections: list[dict]) -> None:
     for corr in corrections:
         if "index" not in corr:
             raise VLMError(f"Missing 'index' in correction: {corr}")
-        if "steering" not in corr or "acceleration" not in corr:
-            raise VLMError(f"Missing steering/acceleration in correction: {corr}")
 
-        steering = corr["steering"]
-        acceleration = corr["acceleration"]
+        if strategy == "action_correction":
+            if "steering" not in corr or "acceleration" not in corr:
+                raise VLMError(f"Missing steering/acceleration in correction: {corr}")
 
-        if not (isinstance(steering, list) and len(steering) == 2):
-            raise VLMError(f"Invalid steering format: {steering}")
-        if not (isinstance(acceleration, list) and len(acceleration) == 2):
-            raise VLMError(f"Invalid acceleration format: {acceleration}")
+            steering = corr["steering"]
+            acceleration = corr["acceleration"]
 
-        # Validate values are in range
-        for val in [steering[1], acceleration[1]]:
-            if not isinstance(val, (int, float)) or not (-1 <= val <= 1):
-                raise VLMError(f"Value out of range [-1, 1]: {val}")
+            # Handle both formats: single value or [before, after] pair
+            def get_after_value(val, name):
+                if isinstance(val, (int, float)):
+                    # Single value - treat as the "after" value
+                    return val
+                elif isinstance(val, list) and len(val) == 2:
+                    # [before, after] pair
+                    return val[1]
+                else:
+                    raise VLMError(f"Invalid {name} format: {val}")
+
+            steering_val = get_after_value(steering, "steering")
+            accel_val = get_after_value(acceleration, "acceleration")
+
+            # Validate values are in range
+            for val in [steering_val, accel_val]:
+                if not isinstance(val, (int, float)) or not (-1 <= val <= 1):
+                    raise VLMError(f"Value out of range [-1, 1]: {val}")
+
+            # Normalize to [before, after] format for consistent processing
+            if not isinstance(steering, list):
+                corr["steering"] = [0, steering]
+            if not isinstance(acceleration, list):
+                corr["acceleration"] = [0, acceleration]
+
+        elif strategy == "weighting":
+            if "weight" not in corr:
+                raise VLMError(f"Missing 'weight' in weighting correction: {corr}")
+            weight = corr["weight"]
+            if not isinstance(weight, (int, float)) or not (-1.0 <= weight <= 1.0):
+                raise VLMError(f"Weight out of range [-1, 1]: {weight}")
+
+        elif strategy == "filtering":
+            if "include" not in corr:
+                raise VLMError(f"Missing 'include' in filtering correction: {corr}")
+            if not isinstance(corr["include"], bool):
+                raise VLMError(f"'include' must be boolean: {corr['include']}")
+
+        elif strategy == "rejection":
+            if "reject_direction" not in corr:
+                raise VLMError(f"Missing 'reject_direction' in rejection correction: {corr}")
+            direction = corr["reject_direction"]
+            if direction not in ["left", "right", "accelerate", "decelerate", "none"]:
+                raise VLMError(f"Invalid reject_direction: {direction}")
 
 
 # =============================================================================
@@ -530,17 +761,19 @@ def apply_corrections(
     trajectory: list,
     corrections: list[dict],
     segment: InterventionSegment,
+    strategy: str = "action_correction",
 ) -> list:
     """
-    Apply VLM corrections to trajectory data.
+    Apply VLM corrections to trajectory data based on strategy.
 
     Args:
         trajectory: Original trajectory data (will be deep copied)
         corrections: List of correction dicts from VLM
         segment: The intervention segment being corrected
+        strategy: One of "action_correction", "weighting", "filtering", "rejection"
 
     Returns:
-        New trajectory with corrections applied
+        New trajectory with corrections/metadata applied
     """
     import copy
     new_trajectory = copy.deepcopy(trajectory)
@@ -549,12 +782,49 @@ def apply_corrections(
         idx = corr["index"]
         if idx < segment.context_start or idx >= segment.end_idx:
             continue
+        if idx >= len(new_trajectory):
+            continue
 
-        new_steering = corr["steering"][1]
-        new_acceleration = corr["acceleration"][1]
+        if strategy == "action_correction":
+            steering = corr["steering"]
+            acceleration = corr["acceleration"]
+            # Handle both single value and [before, after] formats
+            new_steering = steering[1] if isinstance(steering, list) else steering
+            new_acceleration = acceleration[1] if isinstance(acceleration, list) else acceleration
+            # Update action: [steering, acceleration]
+            new_trajectory[idx][1] = [new_steering, new_acceleration]
 
-        # Update action: [steering, acceleration]
-        new_trajectory[idx][1] = [new_steering, new_acceleration]
+        elif strategy == "weighting":
+            # Add weight as 5th element (or update if exists)
+            weight = corr["weight"]
+            if len(new_trajectory[idx]) < 5:
+                new_trajectory[idx].append(weight)
+            else:
+                new_trajectory[idx][4] = weight
+
+        elif strategy == "filtering":
+            # Add include flag as 5th element
+            include = corr["include"]
+            if len(new_trajectory[idx]) < 5:
+                new_trajectory[idx].append(include)
+            else:
+                new_trajectory[idx][4] = include
+
+        elif strategy == "rejection":
+            # Apply rejection by modifying action based on reject_direction
+            direction = corr["reject_direction"]
+            action = new_trajectory[idx][1]
+            if isinstance(action, list) and len(action) >= 2:
+                steering, accel = action[0], action[1]
+                if direction == "left" and steering < 0:
+                    steering = 0.0
+                elif direction == "right" and steering > 0:
+                    steering = 0.0
+                elif direction == "accelerate" and accel > 0:
+                    accel = 0.0
+                elif direction == "decelerate" and accel < 0:
+                    accel = 0.0
+                new_trajectory[idx][1] = [steering, accel]
 
     return new_trajectory
 
@@ -630,7 +900,7 @@ def correct_trajectory_file(
             )
             corrections = query_vlm_for_corrections(request, config)
             corrected_trajectory = apply_corrections(
-                corrected_trajectory, corrections, segment
+                corrected_trajectory, corrections, segment, config.correction_strategy
             )
             logger.info(
                 f"Corrected segment {segment.start_idx}-{segment.end_idx} in {src_path.name}"
@@ -796,6 +1066,178 @@ def collect_existing_corrected(config: PipelineConfig) -> list[Path]:
 
 
 # =============================================================================
+# Data Preparation for Different Training Modes
+# =============================================================================
+
+def prepare_intervention_only_data(
+    episodes: list[EpisodeAssets],
+    config: PipelineConfig,
+) -> list[Path]:
+    """
+    Prepare data with only intervention segments (no VLM correction).
+
+    Returns paths to temporary trajectory files containing only intervention data.
+    """
+    import copy
+    output_dir = config.corrected_dir / "intervention_only"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_paths = []
+    for episode in episodes:
+        with open(episode.trajectory) as f:
+            data = json.load(f)
+
+        trajectory = data.get("trajectory", [])
+        if not trajectory:
+            continue
+
+        # Find intervention segments
+        segments = find_intervention_segments(trajectory, config.context_steps)
+        if not segments:
+            continue
+
+        # Extract only intervention data
+        intervention_trajectory = []
+        for segment in segments:
+            for idx in range(segment.start_idx, segment.end_idx):
+                if idx < len(trajectory):
+                    intervention_trajectory.append(copy.deepcopy(trajectory[idx]))
+
+        if intervention_trajectory:
+            output_data = {
+                "trajectory": intervention_trajectory,
+                "metrics": data.get("metrics", {}),
+            }
+            output_path = output_dir / episode.trajectory.name
+            with open(output_path, "w") as f:
+                json.dump(output_data, f, indent=2)
+            output_paths.append(output_path)
+
+    return output_paths
+
+
+def prepare_hg_dagger_data(
+    episodes: list[EpisodeAssets],
+    config: PipelineConfig,
+) -> list[Path]:
+    """
+    Prepare HG-DAgger-style data: mix of policy regions and intervention data.
+
+    This helps prevent forgetting of good policy behavior during training.
+    """
+    import copy
+    output_dir = config.corrected_dir / "hg_dagger"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_paths = []
+    for episode in episodes:
+        with open(episode.trajectory) as f:
+            data = json.load(f)
+
+        trajectory = data.get("trajectory", [])
+        if not trajectory:
+            continue
+
+        # Keep all data, but mark intervention regions
+        # The BC trainer can then weight these appropriately
+        segments = find_intervention_segments(trajectory, config.context_steps)
+
+        # Create a copy with intervention markers
+        new_trajectory = copy.deepcopy(trajectory)
+        intervention_indices = set()
+        for segment in segments:
+            for idx in range(segment.start_idx, segment.end_idx):
+                intervention_indices.add(idx)
+
+        # Add intervention marker as 5th element
+        for idx, step in enumerate(new_trajectory):
+            is_intervention = idx in intervention_indices
+            if len(step) < 5:
+                step.append(is_intervention)
+            else:
+                step[4] = is_intervention
+
+        output_data = {
+            "trajectory": new_trajectory,
+            "metrics": data.get("metrics", {}),
+        }
+        output_path = output_dir / episode.trajectory.name
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=2)
+        output_paths.append(output_path)
+
+    return output_paths
+
+
+def prepare_vlm_corrected_with_pre_intervention(
+    corrected_paths: list[Path],
+    config: PipelineConfig,
+) -> list[Path]:
+    """
+    Add pre-intervention data from original trajectories to VLM-corrected data.
+    """
+    import copy
+    output_dir = config.corrected_dir / "vlm_with_pre_intervention"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get original episodes
+    episodes = get_episodes_to_process(config)
+    episode_by_name = {ep.trajectory.name: ep for ep in episodes}
+
+    output_paths = []
+    for corrected_path in corrected_paths:
+        with open(corrected_path) as f:
+            corrected_data = json.load(f)
+
+        corrected_trajectory = corrected_data.get("trajectory", [])
+        if not corrected_trajectory:
+            continue
+
+        # Find original episode
+        original_ep = episode_by_name.get(corrected_path.name)
+        if not original_ep:
+            # Use corrected as-is if no original found
+            output_paths.append(corrected_path)
+            continue
+
+        with open(original_ep.trajectory) as f:
+            original_data = json.load(f)
+
+        original_trajectory = original_data.get("trajectory", [])
+
+        # Find intervention segments in original
+        segments = find_intervention_segments(original_trajectory, config.context_steps)
+
+        # Build combined trajectory: pre-intervention from original + corrected intervention
+        combined_trajectory = copy.deepcopy(corrected_trajectory)
+
+        # Add pre-intervention context data with original actions
+        for segment in segments:
+            for idx in range(segment.context_start, segment.start_idx):
+                if idx < len(original_trajectory):
+                    # Mark as pre-intervention context
+                    step = copy.deepcopy(original_trajectory[idx])
+                    if len(step) < 5:
+                        step.append("pre_intervention")
+                    else:
+                        step[4] = "pre_intervention"
+                    # Update in combined trajectory
+                    if idx < len(combined_trajectory):
+                        combined_trajectory[idx] = step
+
+        output_data = {
+            "trajectory": combined_trajectory,
+            "metrics": corrected_data.get("metrics", {}),
+        }
+        output_path = output_dir / corrected_path.name
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=2)
+        output_paths.append(output_path)
+
+    return output_paths
+
+
+# =============================================================================
 # Main Pipeline
 # =============================================================================
 
@@ -806,23 +1248,42 @@ def run_pipeline(config: PipelineConfig) -> None:
     Args:
         config: Pipeline configuration
     """
-    # Mode 1: Use existing corrected trajectories directly
-    if config.use_existing_corrected:
-        corrected_paths = collect_existing_corrected(config)
-        logger.info(f"Using {len(corrected_paths)} existing corrected trajectories")
-    else:
-        # Step 1: Discover episodes
-        episodes = get_episodes_to_process(config)
-        logger.info(f"Found {len(episodes)} non-flawed, non-practice episodes")
+    # Set up experiment checkpoint directory
+    experiment_checkpoint_dir = config.checkpoint_dir / config.experiment_name
+    experiment_checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        if not episodes:
-            logger.warning("No episodes to process")
-            return
+    # Handle pretrained_only mode (no training, just return)
+    if config.training_mode == "pretrained_only":
+        logger.info("Mode: pretrained_only - no additional training needed")
+        return
 
-        # Step 2: Ensure corrections exist
-        if not config.skip_correction:
+    # Get episodes
+    episodes = get_episodes_to_process(config)
+    logger.info(f"Found {len(episodes)} non-flawed, non-practice episodes")
+
+    if not episodes:
+        logger.warning("No episodes to process")
+        return
+
+    # Prepare training data based on mode
+    training_paths: list[Path] = []
+
+    if config.training_mode == "intervention_only":
+        logger.info("Mode: intervention_only - using original intervention data")
+        training_paths = prepare_intervention_only_data(episodes, config)
+
+    elif config.training_mode == "hg_dagger":
+        logger.info("Mode: hg_dagger - mixing policy and intervention data")
+        training_paths = prepare_hg_dagger_data(episodes, config)
+
+    elif config.training_mode == "vlm_corrected":
+        # Use existing corrected trajectories or run correction
+        if config.use_existing_corrected:
+            corrected_paths = collect_existing_corrected(config)
+            logger.info(f"Using {len(corrected_paths)} existing corrected trajectories")
+        elif not config.skip_correction:
             corrected_paths = ensure_corrected_trajectories(episodes, config)
-            logger.info(f"Processed {len(corrected_paths)} trajectories")
+            logger.info(f"Processed {len(corrected_paths)} trajectories with VLM correction")
         else:
             corrected_paths = [
                 get_corrected_path(ep, config)
@@ -831,17 +1292,27 @@ def run_pipeline(config: PipelineConfig) -> None:
             ]
             logger.info(f"Found {len(corrected_paths)} existing corrected trajectories")
 
+        # Optionally add pre-intervention data
+        if config.include_pre_intervention:
+            training_paths = prepare_vlm_corrected_with_pre_intervention(corrected_paths, config)
+            logger.info(f"Added pre-intervention data to {len(training_paths)} trajectories")
+        else:
+            training_paths = corrected_paths
+
     # Step 3: Train BC
     if not config.skip_training:
-        if not corrected_paths:
-            raise ValueError("No corrected trajectories found for training")
+        if not training_paths:
+            raise ValueError("No training data found")
 
-        logger.info(f"Starting BC training on {len(corrected_paths)} trajectories")
+        logger.info(f"Starting BC training on {len(training_paths)} trajectories")
+        logger.info(f"Experiment: {config.experiment_name}")
+        logger.info(f"Training mode: {config.training_mode}")
+        logger.info(f"Checkpoints will be saved to: {experiment_checkpoint_dir}")
 
         from bc_trainer import run_bc_training
 
         run_bc_training(
-            data_source=[str(p) for p in corrected_paths],
+            data_source=[str(p) for p in training_paths],
             num_iters=config.num_iters,
             batch_size=config.batch_size,
             learning_rate=config.learning_rate,
@@ -854,6 +1325,7 @@ def run_pipeline(config: PipelineConfig) -> None:
             sat_margin=config.sat_margin,
             w_jac=config.w_jac,
             checkpoint_freq=config.checkpoint_freq,
+            checkpoint_dir=str(experiment_checkpoint_dir),
         )
 
         logger.info("Training complete")
@@ -972,6 +1444,42 @@ def parse_args() -> PipelineConfig:
         help="Number of parallel workers for correction",
     )
 
+    # VLM provider settings
+    parser.add_argument(
+        "--vlm-provider",
+        type=str,
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="VLM provider to use for corrections",
+    )
+    parser.add_argument(
+        "--correction-strategy",
+        type=str,
+        choices=["action_correction", "weighting", "filtering", "rejection"],
+        default="action_correction",
+        help="VLM correction strategy",
+    )
+
+    # Experiment settings
+    parser.add_argument(
+        "--experiment-name",
+        type=str,
+        default="default",
+        help="Name for this experiment (used in checkpoint paths)",
+    )
+    parser.add_argument(
+        "--training-mode",
+        type=str,
+        choices=["pretrained_only", "intervention_only", "hg_dagger", "vlm_corrected"],
+        default="vlm_corrected",
+        help="Training mode for BC policy",
+    )
+    parser.add_argument(
+        "--include-pre-intervention",
+        action="store_true",
+        help="Include pre-intervention data in training (for VLM corrected mode)",
+    )
+
     # BC training settings
     parser.add_argument("--num-iters", type=int, default=1000, help="Training iterations")
     parser.add_argument("--batch-size", type=int, default=256, help="Training batch size")
@@ -988,23 +1496,32 @@ def parse_args() -> PipelineConfig:
 
     args = parser.parse_args()
 
-    # Get API key from environment
+    # Get API keys from environment
     openai_api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not openai_api_key and not args.skip_correction and not args.use_existing_corrected:
-        parser.error("OPENAI_API_KEY environment variable required for VLM correction")
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    # Check for required API key based on provider
+    if not args.skip_correction and not args.use_existing_corrected:
+        if args.vlm_provider == "anthropic" and not anthropic_api_key:
+            parser.error("ANTHROPIC_API_KEY environment variable required for Anthropic VLM")
+        elif args.vlm_provider == "openai" and not openai_api_key:
+            parser.error("OPENAI_API_KEY environment variable required for OpenAI VLM")
 
     return PipelineConfig(
         base_dir=args.base_dir,
         metadata_path=args.base_dir / "traj_metadata.json",
         corrected_dir=args.corrected_dir,
         checkpoint_dir=args.checkpoint_dir,
+        vlm_provider=args.vlm_provider,
         openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
         context_steps=args.context_steps,
         timesteps_per_second=10,
         max_retries=args.max_retries,
         use_images=args.use_images,
         use_transcript=args.use_transcript,
         image_sample_rate=args.image_sample_rate,
+        correction_strategy=args.correction_strategy,
         num_workers=args.num_workers,
         num_iters=args.num_iters,
         batch_size=args.batch_size,
@@ -1018,6 +1535,9 @@ def parse_args() -> PipelineConfig:
         delta_max=args.delta_max,
         sat_margin=args.sat_margin,
         checkpoint_freq=args.checkpoint_freq,
+        experiment_name=args.experiment_name,
+        training_mode=args.training_mode,
+        include_pre_intervention=args.include_pre_intervention,
         skip_correction=args.skip_correction,
         skip_training=args.skip_training,
         force_recorrect=args.force_recorrect,
